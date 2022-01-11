@@ -1,23 +1,20 @@
+// @ts-ignore
 import React, { useCallback } from "react";
 import "./App.css";
 import debounce from "lodash.debounce";
 import { getFileSearchResult } from "./fileService";
 
 const getFilesList = async (
-  prefixQuery: string,
-  resultCount: number,
-  setIsLoading: (isLoading: boolean) => void,
-  setIsErrored: (isErrored: boolean) => void,
-  setFilesList: (filesList: string[]) => void
+  appState: Record<string, any>,
+  setAppState: (appState: Record<string, any>) => void
 ) => {
-  setIsLoading(true);
+  setAppState({...appState, isLoading: true });
   try {
-    const result = await getFileSearchResult(prefixQuery, resultCount);
-    setFilesList(result);
+    const result = await getFileSearchResult(appState.prefixQuery, appState.resultCount);
+    setAppState({...appState, filesList: result, isLoading: false });
   } catch (error) {
-    setIsErrored(true);
+    setAppState({...appState, filesList: [], isLoading: false, isErrored: true });
   }
-  setIsLoading(false);
 };
 
 const debouncedGetFilesList = debounce(getFilesList, 300, {
@@ -25,67 +22,68 @@ const debouncedGetFilesList = debounce(getFilesList, 300, {
   trailing: true,
 });
 
-const getOnChangeResultsCountCallback = (setResultsCount: (resultsCount: number) => void) => (e: any) => {
+const getOnChangeResultsCountCallback = (setAppState: (appState: Record<string, any>) => void) => (e: any) => {
   const parsedCount = parseInt(e?.currentTarget?.value);
-  console.log({
-    parsedCount,
-    isNumber: !isNaN(parsedCount),
-    remainder: parsedCount & 1,
-    isWholeNumber: (parsedCount & 1) === 0,
-  });
-  !isNaN(parsedCount) && setResultsCount(parsedCount);
+  // @ts-ignore
+  !isNaN(parsedCount) && setAppState((appState) => ({ ...appState, resultCount: parsedCount }));
 }
 
 export const App: React.FC = () => {
-  // TODO: Extract to a custom `useAppState` hook.
-  const [isLoading, setIsLoading] = React.useState<boolean>(true);
-  const [isErrored, setIsErrored] = React.useState<boolean>(false);
-  const [filesList, setFilesList] = React.useState<string[]>([]);
-  const [prefixQuery, setPrefixQuery] = React.useState<string>("");
-  const [resultCount, setResultsCount] = React.useState<number>(7);
-  const [selectedFileIndex, setSelectedFileIndex] = React.useState<
-    number | null
-  >(null);
+  const [appState, setAppState] = React.useState({
+    isLoading: true,
+    isErrored: false,
+    filesList: [],
+    prefixQuery: "",
+    resultCount: 7,
+    selectedFileIndex: 0
+  })
+  const isFirstLoadRef = React.useRef(true);
+  const queryRef = React.useRef("");
+  const resultCountRef = React.useRef(7);
 
 
-  /**
-   * Ran out of time before I could diagnose the issue here!
-   */
-  // const keyHandler = (e: KeyboardEvent) => {
-  //   console.log(`Pressed ${e.key}`);
-  //   if (isLoading) {
-  //     return;
-  //   }
-  //   console.log({ key: e.key });
-  //   if (e.key === "ArrowDown") {
-  //     (selectedFileIndex || 0) < filesList.length - 1 &&
-  //       setSelectedFileIndex((selectedFileIndex || 0) + 1);
-  //   }
-  //   if (e.key === "ArrowUp") {
-  //     selectedFileIndex !== 0 &&
-  //       setSelectedFileIndex((selectedFileIndex || 0) - 1);
-  //   }
-  // };
+  const keyHandler = (e: KeyboardEvent) => {
+    // @ts-ignore
+    setAppState((appState) => {
+      const { isLoading, selectedFileIndex, filesList } = appState
+      if (isLoading) {
+        return;
+      }
+      if (e.key === "ArrowDown") {
+        if (selectedFileIndex < filesList.length - 1) {
+          return { ...appState, selectedFileIndex: selectedFileIndex + 1 };
+        }
+      }
+      if (e.key === "ArrowUp") {
+        if (selectedFileIndex > 0) {
+          return { ...appState, selectedFileIndex: selectedFileIndex - 1 };
+        }
+      }
+      return appState
+    });
+  };
 
   React.useEffect(() => {
-    debouncedGetFilesList(
-      prefixQuery,
-      resultCount,
-      setIsLoading,
-      setIsErrored,
-      setFilesList
-    );
-  }, [prefixQuery, resultCount]);
+    if (isFirstLoadRef.current || appState.prefixQuery !== queryRef.current || appState.resultCount !== resultCountRef.current) {
+      isFirstLoadRef.current = false
+      queryRef.current = appState.prefixQuery
+      resultCountRef.current = appState.resultCount
+      debouncedGetFilesList(
+        appState,
+        // @ts-ignore
+        setAppState
+      );
+    }
+  }, [appState]);
 
   /**
    * Full disclosure: I'm a little rusty on hooks since I've been stuck at React 16.3 for the last two years
    * Would be fun to debug how to get a global key handler working though!
    */
-  // React.useEffect(() => {
-  //   console.log("Registering binds");
-  //   document.addEventListener("keydown", keyHandler);
-  //   return document.removeEventListener("keydown", keyHandler);
-  // }, []);
+  React.useEffect(() => {
+    document.addEventListener("keydown", keyHandler);
+    return () => {document.removeEventListener("keydown", keyHandler)};
+  }, []);
 
   return (
     <div className="app">
@@ -96,8 +94,9 @@ export const App: React.FC = () => {
             <label htmlFor="prefixQueryInput">Find by prefix: </label>
             <input
               id="prefixQueryInput"
-              value={prefixQuery}
-              onChange={(e) => setPrefixQuery(e.currentTarget.value)}
+              disabled={appState.isLoading}
+              value={appState.prefixQuery}
+              onChange={(e) => setAppState({...appState, prefixQuery: e.currentTarget.value})}
             />
           </div>
           <div>
@@ -105,25 +104,27 @@ export const App: React.FC = () => {
             <input
               id="resultCountInput"
               type="number"
-              value={resultCount}
-              onChange={getOnChangeResultsCountCallback(setResultsCount)}
+              value={appState.resultCount}
+              disabled={appState.isLoading}
+              // @ts-ignore
+              onChange={getOnChangeResultsCountCallback(setAppState)}
             />
           </div>
         </div>
         <div className="content-container">
-          {isLoading ? (
+          {appState.isLoading ? (
             <div className="loading-spinner">💾</div>
-          ) : isErrored ? (
+          ) : appState.isErrored ? (
             <div>Error loading file list!</div>
           ) : (
             <div className="files-list">
-              {filesList &&
-                filesList.map((filePath, index) => (
+              {appState.filesList &&
+                appState.filesList.map((filePath, index) => (
                   <div
                     key={`file-result-${index}`}
                     className={
                       "file-result" +
-                      (index === selectedFileIndex ? " selected" : "")
+                      (index === appState.selectedFileIndex ? " selected" : "")
                     }
                   >
                     {filePath}
